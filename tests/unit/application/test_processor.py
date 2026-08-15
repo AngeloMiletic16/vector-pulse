@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from vector_pulse.application.asset_registry import AssetRegistry
 from vector_pulse.application.processor import process_telemetry
 from vector_pulse.ingestion.schemas import (
     Condition,
@@ -16,6 +17,7 @@ async def test_processor_consumes_message_from_queue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     queue: asyncio.Queue[TelemetryMessage] = asyncio.Queue()
+    registry = AssetRegistry()
 
     telemetry = TelemetryMessage(
         tag_id="tag-001",
@@ -39,7 +41,10 @@ async def test_processor_consumes_message_from_queue(
     await queue.put(telemetry)
 
     processor_task = asyncio.create_task(
-        process_telemetry(queue)
+        process_telemetry(
+            queue,
+            registry,
+        )
     )
 
     await asyncio.wait_for(
@@ -56,3 +61,8 @@ async def test_processor_consumes_message_from_queue(
 
     assert "Processed tag=tag-001" in captured.out
     assert queue.empty()
+
+    latest = registry.get_latest("tag-001")
+
+    assert latest is not None
+    assert latest.sequence_number == 1
