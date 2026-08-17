@@ -1,14 +1,19 @@
 import asyncio
 
-from vector_pulse.ingestion.schemas import TelemetryMessage
 from vector_pulse.application.asset_registry import (
     AssetRegistry,
     UpdateStatus,
 )
+from vector_pulse.ingestion.schemas import TelemetryMessage
+from vector_pulse.persistence.sqlite_storage import (
+    SQLiteStorage,
+)
+
 
 async def process_telemetry(
     queue: asyncio.Queue[TelemetryMessage],
     registry: AssetRegistry,
+    storage: SQLiteStorage,
 ) -> None:
     while True:
         telemetry = await queue.get()
@@ -32,6 +37,22 @@ async def process_telemetry(
                 )
                 continue
 
+            state = registry.get_state(telemetry.tag_id)
+
+            if state is None:
+                raise RuntimeError(
+                    "Accepted telemetry is missing "
+                    "from the asset registry"
+                )
+
+            await storage.save_accepted_telemetry(state)
+
+            if result.came_online:
+                print(
+                    f"Asset back online "
+                    f"tag={telemetry.tag_id}"
+                )
+
             if result.status is UpdateStatus.GAP_DETECTED:
                 print(
                     f"Sequence gap detected "
@@ -44,7 +65,8 @@ async def process_telemetry(
                 f"sequence={telemetry.sequence_number} "
                 f"x={telemetry.position.x:.2f} "
                 f"y={telemetry.position.y:.2f} "
-                f"battery={telemetry.condition.battery_percent:.1f}%"
+                f"battery="
+                f"{telemetry.condition.battery_percent:.1f}%"
             )
 
         finally:
