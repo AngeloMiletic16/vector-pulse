@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,12 @@ from vector_pulse.application.asset_registry import (
     AssetStatus,
 )
 from vector_pulse.ingestion.schemas import TelemetryMessage
+
+
+@dataclass(frozen=True)
+class StoredTelemetry:
+    telemetry: TelemetryMessage
+    received_at: datetime
 
 
 class SQLiteStorage:
@@ -149,22 +156,84 @@ class SQLiteStorage:
             ) as cursor:
                 rows = await cursor.fetchall()
 
-        states: list[AssetState] = []
-
-        for payload_json, last_seen, status in rows:
-            telemetry = TelemetryMessage.model_validate_json(
-                payload_json
+        return [
+            self._build_asset_state(
+                payload_json=payload_json,
+                last_seen=last_seen,
+                status=status,
             )
+            for payload_json, last_seen, status in rows
+        ]
 
-            states.append(
-                AssetState(
-                    telemetry=telemetry,
-                    last_seen=datetime.fromisoformat(last_seen),
-                    status=AssetStatus(status),
-                )
+    async def get_asset_state(
+        self,
+        tag_id: str,
+    ) -> AssetState | None:
+        async with aiosqlite.connect(
+            self._database_path
+        ) as database:
+            async with database.execute(
+                """
+                SELECT
+                    payload_json,
+                    last_seen,
+                    status
+                FROM asset_state
+                WHERE tag_id = ?
+                """,
+                (tag_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+        if row is None:
+            return None
+
+        payload_json, last_seen, status = row
+
+        return self._build_asset_state(
+            payload_json=payload_json,
+            last_seen=last_seen,
+            status=status,
+        )
+
+    async def load_telemetry_history(
+        self,
+        tag_id: str,
+        limit: int = 20,
+    ) -> list[StoredTelemetry]:
+        async with aiosqlite.connect(
+            self._database_path
+        ) as database:
+            async with database.execute(
+                """
+                SELECT
+                    payload_json,
+                    received_at
+                FROM telemetry
+                WHERE tag_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (
+                    tag_id,
+                    limit,
+                ),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        return [
+            StoredTelemetry(
+                telemetry=(
+                    TelemetryMessage.model_validate_json(
+                        payload_json
+                    )
+                ),
+                received_at=datetime.fromisoformat(
+                    received_at
+                ),
             )
-
-        return states
+            for payload_json, received_at in rows
+        ]
 
     async def telemetry_count(self) -> int:
         async with aiosqlite.connect(
@@ -179,3 +248,19 @@ class SQLiteStorage:
             return 0
 
         return int(row[0])
+
+    @staticmethod
+    def _build_asset_state(
+        payload_json: str,
+        last_seen: str,
+        status: str,
+    ) -> AssetState:
+        telemetry = TelemetryMessage.model_validate_json(
+            payload_json
+        )
+
+        return AssetState(
+            telemetry=telemetry,
+            last_seen=datetime.fromisoformat(last_seen),
+            status=AssetStatus(status),
+        )
