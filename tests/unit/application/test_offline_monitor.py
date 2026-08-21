@@ -7,6 +7,12 @@ from vector_pulse.application.asset_registry import (
     AssetRegistry,
     AssetStatus,
 )
+from vector_pulse.application.event_broadcaster import (
+    EventBroadcaster,
+)
+from vector_pulse.application.events import (
+    AssetEventType,
+)
 from vector_pulse.application.offline_monitor import (
     check_offline_assets,
 )
@@ -32,10 +38,13 @@ async def test_offline_transition_is_persisted(
     )
     await storage.initialize()
 
+    broadcaster = EventBroadcaster()
+    events = broadcaster.subscribe()
+
     first_seen = datetime(
         2026,
         8,
-        17,
+        20,
         12,
         0,
         tzinfo=UTC,
@@ -69,20 +78,35 @@ async def test_offline_transition_is_persisted(
 
     assert state is not None
 
-    await storage.save_accepted_telemetry(state)
+    await storage.save_accepted_telemetry(
+        state
+    )
 
     newly_offline = await check_offline_assets(
         registry,
         storage,
+        broadcaster,
         now=first_seen + timedelta(seconds=16),
         offline_after_seconds=15,
     )
 
     assert len(newly_offline) == 1
 
-    persisted_states = await storage.load_asset_states()
+    event = await events.get()
+
+    assert (
+        event.type
+        is AssetEventType.ASSET_OFFLINE
+    )
+
+    assert event.tag_id == "tag-001"
+
+    persisted_states = (
+        await storage.load_asset_states()
+    )
 
     assert len(persisted_states) == 1
+
     assert (
         persisted_states[0].status
         is AssetStatus.OFFLINE

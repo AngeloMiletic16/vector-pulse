@@ -18,6 +18,11 @@ from vector_pulse.ingestion.schemas import (
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
+from fastapi.testclient import TestClient
+
+from vector_pulse.application.event_broadcaster import (
+    EventBroadcaster,
+)
 
 
 def build_state(
@@ -239,3 +244,30 @@ async def test_get_telemetry_history(
         payload[0]["telemetry"]["sequence_number"]
         == 2
     )
+
+def test_websocket_accepts_connection(
+    tmp_path: Path,
+) -> None:
+    storage = SQLiteStorage(
+        tmp_path / "test.db"
+    )
+
+    broadcaster = EventBroadcaster()
+
+    app = create_app(
+        storage,
+        broadcaster,
+    )
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/ws/assets"
+        ) as websocket:
+            message = websocket.receive_json()
+
+            assert message == {
+                "type": "connected",
+                "message": (
+                    "Subscribed to live asset events"
+                ),
+            }

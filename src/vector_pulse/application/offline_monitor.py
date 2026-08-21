@@ -5,6 +5,13 @@ from vector_pulse.application.asset_registry import (
     AssetRegistry,
     AssetState,
 )
+from vector_pulse.application.event_broadcaster import (
+    EventBroadcaster,
+)
+from vector_pulse.application.events import (
+    AssetEvent,
+    AssetEventType,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
@@ -17,9 +24,12 @@ OFFLINE_CHECK_INTERVAL_SECONDS = 2.0
 async def check_offline_assets(
     registry: AssetRegistry,
     storage: SQLiteStorage,
+    broadcaster: EventBroadcaster,
     *,
     now: datetime | None = None,
-    offline_after_seconds: float = OFFLINE_AFTER_SECONDS,
+    offline_after_seconds: float = (
+        OFFLINE_AFTER_SECONDS
+    ),
 ) -> list[AssetState]:
     if now is None:
         now = datetime.now(UTC)
@@ -32,7 +42,17 @@ async def check_offline_assets(
     )
 
     for state in newly_offline:
-        await storage.update_asset_status(state)
+        await storage.update_asset_status(
+            state
+        )
+
+        await broadcaster.publish(
+            AssetEvent.from_state(
+                AssetEventType.ASSET_OFFLINE,
+                state,
+                occurred_at=now,
+            )
+        )
 
         print(
             f"Asset offline "
@@ -46,6 +66,7 @@ async def check_offline_assets(
 async def monitor_offline_assets(
     registry: AssetRegistry,
     storage: SQLiteStorage,
+    broadcaster: EventBroadcaster,
     *,
     check_interval_seconds: float = (
         OFFLINE_CHECK_INTERVAL_SECONDS
@@ -55,10 +76,15 @@ async def monitor_offline_assets(
     ),
 ) -> None:
     while True:
-        await asyncio.sleep(check_interval_seconds)
+        await asyncio.sleep(
+            check_interval_seconds
+        )
 
         await check_offline_assets(
             registry,
             storage,
-            offline_after_seconds=offline_after_seconds,
+            broadcaster,
+            offline_after_seconds=(
+                offline_after_seconds
+            ),
         )
