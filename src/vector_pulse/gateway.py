@@ -13,6 +13,10 @@ from vector_pulse.application.asset_registry import (
 from vector_pulse.application.event_broadcaster import (
     EventBroadcaster,
 )
+from vector_pulse.application.geofencing import (
+    GeofenceService,
+    create_default_geofence,
+)
 from vector_pulse.application.offline_monitor import (
     monitor_offline_assets,
 )
@@ -40,6 +44,7 @@ async def run_gateway_tasks(
     registry: AssetRegistry,
     storage: SQLiteStorage,
     broadcaster: EventBroadcaster,
+    geofence: GeofenceService,
 ) -> None:
     async with asyncio.TaskGroup() as task_group:
         task_group.create_task(
@@ -55,6 +60,7 @@ async def run_gateway_tasks(
                 registry,
                 storage,
                 broadcaster,
+                geofence,
             ),
             name="telemetry-processor",
         )
@@ -76,6 +82,7 @@ def create_gateway_app() -> FastAPI:
 
     registry = AssetRegistry()
     broadcaster = EventBroadcaster()
+    geofence = create_default_geofence()
 
     telemetry_queue: asyncio.Queue[
         TelemetryMessage
@@ -119,6 +126,7 @@ def create_gateway_app() -> FastAPI:
                 registry,
                 storage,
                 broadcaster,
+                geofence,
             ),
             name="gateway-runtime",
         )
@@ -137,6 +145,7 @@ def create_gateway_app() -> FastAPI:
     return create_app(
         storage,
         broadcaster,
+        geofence,
         lifespan=lifespan,
     )
 

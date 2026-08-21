@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
+from vector_pulse.application.geofencing import (
+    ZoneName,
+)
 from vector_pulse.ingestion.schemas import TelemetryMessage
 
 
@@ -22,6 +25,8 @@ class AssetState:
     telemetry: TelemetryMessage
     last_seen: datetime
     status: AssetStatus
+    current_zone: ZoneName | None = None
+    zone_entered_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -43,31 +48,37 @@ class AssetRegistry:
         if received_at is None:
             received_at = datetime.now(UTC)
 
-        previous = self._assets.get(telemetry.tag_id)
+        previous = self._assets.get(
+            telemetry.tag_id
+        )
 
         if previous is None:
-            self._assets[telemetry.tag_id] = AssetState(
-                telemetry=telemetry,
-                last_seen=received_at,
-                status=AssetStatus.ONLINE,
+            self._assets[telemetry.tag_id] = (
+                AssetState(
+                    telemetry=telemetry,
+                    last_seen=received_at,
+                    status=AssetStatus.ONLINE,
+                )
             )
 
             return UpdateResult(
                 status=UpdateStatus.ACCEPTED,
             )
 
-        came_online = previous.status is AssetStatus.OFFLINE
-
+        came_online = (
+            previous.status
+            is AssetStatus.OFFLINE
+        )
 
         if (
             came_online
             and telemetry.sequence_number
             <= previous.telemetry.sequence_number
         ):
-            self._assets[telemetry.tag_id] = AssetState(
+            self._store_updated_state(
+                previous=previous,
                 telemetry=telemetry,
-                last_seen=received_at,
-                status=AssetStatus.ONLINE,
+                received_at=received_at,
             )
 
             return UpdateResult(
@@ -95,15 +106,19 @@ class AssetRegistry:
             previous.telemetry.sequence_number + 1
         )
 
-        if telemetry.sequence_number > expected_sequence:
+        if (
+            telemetry.sequence_number
+            > expected_sequence
+        ):
             missing_messages = (
-                telemetry.sequence_number - expected_sequence
+                telemetry.sequence_number
+                - expected_sequence
             )
 
-            self._assets[telemetry.tag_id] = AssetState(
+            self._store_updated_state(
+                previous=previous,
                 telemetry=telemetry,
-                last_seen=received_at,
-                status=AssetStatus.ONLINE,
+                received_at=received_at,
             )
 
             return UpdateResult(
@@ -112,16 +127,41 @@ class AssetRegistry:
                 came_online=came_online,
             )
 
-        self._assets[telemetry.tag_id] = AssetState(
+        self._store_updated_state(
+            previous=previous,
             telemetry=telemetry,
-            last_seen=received_at,
-            status=AssetStatus.ONLINE,
+            received_at=received_at,
         )
 
         return UpdateResult(
             status=UpdateStatus.ACCEPTED,
             came_online=came_online,
         )
+
+    def apply_zone(
+        self,
+        tag_id: str,
+        zone: ZoneName | None,
+        changed_at: datetime,
+    ) -> AssetState:
+        state = self._assets.get(tag_id)
+
+        if state is None:
+            raise KeyError(
+                f"Unknown asset: {tag_id}"
+            )
+
+        if state.current_zone == zone:
+            return state
+
+        state.current_zone = zone
+
+        if zone is None:
+            state.zone_entered_at = None
+        else:
+            state.zone_entered_at = changed_at
+
+        return state
 
     def mark_offline(
         self,
@@ -134,9 +174,14 @@ class AssetRegistry:
             if state.status is AssetStatus.OFFLINE:
                 continue
 
-            time_since_last_seen = now - state.last_seen
+            time_since_last_seen = (
+                now - state.last_seen
+            )
 
-            if time_since_last_seen >= offline_after:
+            if (
+                time_since_last_seen
+                >= offline_after
+            ):
                 state.status = AssetStatus.OFFLINE
                 newly_offline.append(state)
 
@@ -152,9 +197,15 @@ class AssetRegistry:
                 telemetry=state.telemetry,
                 last_seen=state.last_seen,
                 status=AssetStatus.OFFLINE,
+                current_zone=state.current_zone,
+                zone_entered_at=(
+                    state.zone_entered_at
+                ),
             )
 
-        self._assets[state.telemetry.tag_id] = state
+        self._assets[
+            state.telemetry.tag_id
+        ] = state
 
     def get_state(
         self,
@@ -178,3 +229,19 @@ class AssetRegistry:
 
     def all_states(self) -> list[AssetState]:
         return list(self._assets.values())
+
+    def _store_updated_state(
+        self,
+        previous: AssetState,
+        telemetry: TelemetryMessage,
+        received_at: datetime,
+    ) -> None:
+        self._assets[telemetry.tag_id] = AssetState(
+            telemetry=telemetry,
+            last_seen=received_at,
+            status=AssetStatus.ONLINE,
+            current_zone=previous.current_zone,
+            zone_entered_at=(
+                previous.zone_entered_at
+            ),
+        )
