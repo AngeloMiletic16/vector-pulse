@@ -10,6 +10,9 @@ from vector_pulse.api.app import create_app
 from vector_pulse.application.asset_registry import (
     AssetRegistry,
 )
+from vector_pulse.application.dwell_monitor import (
+    monitor_dwell_time,
+)
 from vector_pulse.application.event_broadcaster import (
     EventBroadcaster,
 )
@@ -22,6 +25,12 @@ from vector_pulse.application.offline_monitor import (
 )
 from vector_pulse.application.processor import (
     process_telemetry,
+)
+from vector_pulse.application.rules import (
+    DwellRuleEngine,
+    MovementRuleEngine,
+    create_default_dwell_rules,
+    create_default_movement_rules,
 )
 from vector_pulse.ingestion.mqtt_consumer import (
     consume_telemetry,
@@ -45,6 +54,8 @@ async def run_gateway_tasks(
     storage: SQLiteStorage,
     broadcaster: EventBroadcaster,
     geofence: GeofenceService,
+    dwell_rules: DwellRuleEngine,
+    movement_rules: MovementRuleEngine,
 ) -> None:
     async with asyncio.TaskGroup() as task_group:
         task_group.create_task(
@@ -61,6 +72,7 @@ async def run_gateway_tasks(
                 storage,
                 broadcaster,
                 geofence,
+                movement_rules,
             ),
             name="telemetry-processor",
         )
@@ -74,6 +86,16 @@ async def run_gateway_tasks(
             name="offline-monitor",
         )
 
+        task_group.create_task(
+            monitor_dwell_time(
+                registry,
+                storage,
+                broadcaster,
+                dwell_rules,
+            ),
+            name="dwell-monitor",
+        )
+
 
 def create_gateway_app() -> FastAPI:
     storage = SQLiteStorage(
@@ -82,7 +104,12 @@ def create_gateway_app() -> FastAPI:
 
     registry = AssetRegistry()
     broadcaster = EventBroadcaster()
+
     geofence = create_default_geofence()
+    dwell_rules = create_default_dwell_rules()
+    movement_rules = (
+        create_default_movement_rules()
+    )
 
     telemetry_queue: asyncio.Queue[
         TelemetryMessage
@@ -127,6 +154,8 @@ def create_gateway_app() -> FastAPI:
                 storage,
                 broadcaster,
                 geofence,
+                dwell_rules,
+                movement_rules,
             ),
             name="gateway-runtime",
         )
@@ -146,6 +175,8 @@ def create_gateway_app() -> FastAPI:
         storage,
         broadcaster,
         geofence,
+        dwell_rules,
+        movement_rules,
         lifespan=lifespan,
     )
 

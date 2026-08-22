@@ -2,9 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
-from vector_pulse.application.geofencing import (
-    ZoneName,
-)
+from vector_pulse.application.geofencing import ZoneName
 from vector_pulse.ingestion.schemas import TelemetryMessage
 
 
@@ -27,6 +25,7 @@ class AssetState:
     status: AssetStatus
     current_zone: ZoneName | None = None
     zone_entered_at: datetime | None = None
+    dwell_alerted: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,11 +154,27 @@ class AssetRegistry:
             return state
 
         state.current_zone = zone
+        state.dwell_alerted = False
 
         if zone is None:
             state.zone_entered_at = None
         else:
             state.zone_entered_at = changed_at
+
+        return state
+
+    def mark_dwell_alerted(
+        self,
+        tag_id: str,
+    ) -> AssetState:
+        state = self._assets.get(tag_id)
+
+        if state is None:
+            raise KeyError(
+                f"Unknown asset: {tag_id}"
+            )
+
+        state.dwell_alerted = True
 
         return state
 
@@ -200,6 +215,9 @@ class AssetRegistry:
                 current_zone=state.current_zone,
                 zone_entered_at=(
                     state.zone_entered_at
+                ),
+                dwell_alerted=(
+                    state.dwell_alerted
                 ),
             )
 
@@ -243,5 +261,8 @@ class AssetRegistry:
             current_zone=previous.current_zone,
             zone_entered_at=(
                 previous.zone_entered_at
+            ),
+            dwell_alerted=(
+                previous.dwell_alerted
             ),
         )

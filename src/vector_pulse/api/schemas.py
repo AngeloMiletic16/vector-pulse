@@ -8,8 +8,11 @@ from vector_pulse.application.asset_registry import (
 from vector_pulse.application.events import (
     AssetEventType,
 )
-from vector_pulse.application.geofencing import (
-    ZoneName,
+from vector_pulse.application.geofencing import ZoneName
+from vector_pulse.application.rules import (
+    AlertDetailValue,
+    AlertSeverity,
+    RuleAlertType,
 )
 from vector_pulse.ingestion.schemas import TelemetryMessage
 
@@ -23,6 +26,7 @@ class AssetStateResponse(BaseModel):
     last_seen: datetime
     current_zone: ZoneName | None
     zone_entered_at: datetime | None
+    dwell_alerted: bool
     telemetry: TelemetryMessage
 
 
@@ -53,3 +57,31 @@ class ZoneTransitionResponse(BaseModel):
     current_zone: ZoneName | None
     occurred_at: datetime
     sequence_number: int
+
+
+class AlertResponse(BaseModel):
+    type: RuleAlertType
+    severity: AlertSeverity
+    tag_id: str
+    occurred_at: datetime
+    sequence_number: int
+    zone: ZoneName | None
+    message: str
+    details: dict[str, AlertDetailValue]
+
+
+class DwellPolicyResponse(BaseModel):
+    zone: ZoneName
+    threshold_seconds: float
+    severity: AlertSeverity
+
+
+class MovementRulesResponse(BaseModel):
+    max_reported_speed_mps: float
+    max_calculated_speed_mps: float
+    minimum_time_delta_seconds: float
+
+
+class MonitoringRulesResponse(BaseModel):
+    dwell_policies: list[DwellPolicyResponse]
+    movement: MovementRulesResponse

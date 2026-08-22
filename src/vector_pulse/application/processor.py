@@ -14,6 +14,10 @@ from vector_pulse.application.events import (
 from vector_pulse.application.geofencing import (
     GeofenceService,
 )
+from vector_pulse.application.rules import (
+    MovementRuleEngine,
+    create_default_movement_rules,
+)
 from vector_pulse.ingestion.schemas import TelemetryMessage
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
@@ -26,7 +30,13 @@ async def process_telemetry(
     storage: SQLiteStorage,
     broadcaster: EventBroadcaster,
     geofence: GeofenceService,
+    movement_rules: MovementRuleEngine | None = None,
 ) -> None:
+    if movement_rules is None:
+        movement_rules = (
+            create_default_movement_rules()
+        )
+
     while True:
         telemetry = await queue.get()
 
@@ -41,7 +51,9 @@ async def process_telemetry(
                 else None
             )
 
-            result = registry.update(telemetry)
+            result = registry.update(
+                telemetry
+            )
 
             if result.status is UpdateStatus.DUPLICATE:
                 print(
@@ -62,6 +74,23 @@ async def process_telemetry(
                 )
                 continue
 
+            state = registry.get_state(
+                telemetry.tag_id
+            )
+
+            if state is None:
+                raise RuntimeError(
+                    "Accepted telemetry is missing "
+                    "from the asset registry"
+                )
+
+            movement_alerts = (
+                movement_rules.evaluate(
+                    previous_state,
+                    state,
+                )
+            )
+
             transition = geofence.evaluate(
                 previous_zone=previous_zone,
                 position=telemetry.position,
@@ -71,11 +100,7 @@ async def process_telemetry(
                 registry.apply_zone(
                     tag_id=telemetry.tag_id,
                     zone=transition.current_zone,
-                    changed_at=(
-                        registry
-                        .get_state(telemetry.tag_id)
-                        .last_seen
-                    ),
+                    changed_at=state.last_seen,
                 )
             else:
                 print(
@@ -91,8 +116,7 @@ async def process_telemetry(
 
             if state is None:
                 raise RuntimeError(
-                    "Accepted telemetry is missing "
-                    "from the asset registry"
+                    "Asset disappeared from registry"
                 )
 
             await storage.save_accepted_telemetry(
@@ -121,6 +145,25 @@ async def process_telemetry(
                     f"Sequence gap detected "
                     f"tag={telemetry.tag_id} "
                     f"missing={result.missing_messages}"
+                )
+
+            for alert in movement_alerts:
+                await storage.save_rule_alert(
+                    alert
+                )
+
+                await broadcaster.publish(
+                    AssetEvent.from_rule_alert(
+                        alert,
+                        state,
+                    )
+                )
+
+                print(
+                    f"Movement alert "
+                    f"type={alert.type.value} "
+                    f"tag={alert.tag_id} "
+                    f"severity={alert.severity.value}"
                 )
 
             if transition.changed:

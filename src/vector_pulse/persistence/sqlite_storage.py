@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +13,11 @@ from vector_pulse.application.events import (
     AssetEvent,
     AssetEventType,
 )
-from vector_pulse.application.geofencing import (
-    ZoneName,
+from vector_pulse.application.geofencing import ZoneName
+from vector_pulse.application.rules import (
+    AlertSeverity,
+    RuleAlert,
+    RuleAlertType,
 )
 from vector_pulse.ingestion.schemas import TelemetryMessage
 
@@ -74,7 +78,8 @@ class SQLiteStorage:
                     status TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     current_zone TEXT,
-                    zone_entered_at TEXT
+                    zone_entered_at TEXT,
+                    dwell_alerted INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -94,10 +99,22 @@ class SQLiteStorage:
                 """
             )
 
-            # Existing development databases were created
-            # before geofencing existed. CREATE TABLE IF
-            # NOT EXISTS does not add new columns, so these
-            # calls act as a small explicit schema migration.
+            await database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tag_id TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL,
+                    zone TEXT,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL
+                )
+                """
+            )
+
             await self._ensure_column(
                 database,
                 table_name="telemetry",
@@ -119,6 +136,15 @@ class SQLiteStorage:
                 column_definition="TEXT",
             )
 
+            await self._ensure_column(
+                database,
+                table_name="asset_state",
+                column_name="dwell_alerted",
+                column_definition=(
+                    "INTEGER NOT NULL DEFAULT 0"
+                ),
+            )
+
             await database.execute(
                 """
                 CREATE INDEX IF NOT EXISTS
@@ -135,6 +161,14 @@ class SQLiteStorage:
                 """
             )
 
+            await database.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_alerts_tag_id_id
+                ON alerts(tag_id, id DESC)
+                """
+            )
+
             await database.commit()
 
     async def save_accepted_telemetry(
@@ -142,7 +176,6 @@ class SQLiteStorage:
         state: AssetState,
     ) -> None:
         telemetry = state.telemetry
-        payload_json = telemetry.model_dump_json()
 
         current_zone = (
             state.current_zone.value
@@ -176,7 +209,7 @@ class SQLiteStorage:
                     telemetry.sequence_number,
                     telemetry.timestamp.isoformat(),
                     state.last_seen.isoformat(),
-                    payload_json,
+                    telemetry.model_dump_json(),
                     current_zone,
                 ),
             )
@@ -190,25 +223,68 @@ class SQLiteStorage:
                     status,
                     payload_json,
                     current_zone,
-                    zone_entered_at
+                    zone_entered_at,
+                    dwell_alerted
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tag_id) DO UPDATE SET
                     sequence_number = excluded.sequence_number,
                     last_seen = excluded.last_seen,
                     status = excluded.status,
                     payload_json = excluded.payload_json,
                     current_zone = excluded.current_zone,
-                    zone_entered_at = excluded.zone_entered_at
+                    zone_entered_at = excluded.zone_entered_at,
+                    dwell_alerted = excluded.dwell_alerted
                 """,
                 (
                     telemetry.tag_id,
                     telemetry.sequence_number,
                     state.last_seen.isoformat(),
                     state.status.value,
-                    payload_json,
+                    telemetry.model_dump_json(),
                     current_zone,
                     zone_entered_at,
+                    int(state.dwell_alerted),
+                ),
+            )
+
+            await database.commit()
+
+    async def update_asset_runtime_state(
+        self,
+        state: AssetState,
+    ) -> None:
+        current_zone = (
+            state.current_zone.value
+            if state.current_zone is not None
+            else None
+        )
+
+        zone_entered_at = (
+            state.zone_entered_at.isoformat()
+            if state.zone_entered_at is not None
+            else None
+        )
+
+        async with aiosqlite.connect(
+            self._database_path
+        ) as database:
+            await database.execute(
+                """
+                UPDATE asset_state
+                SET
+                    status = ?,
+                    current_zone = ?,
+                    zone_entered_at = ?,
+                    dwell_alerted = ?
+                WHERE tag_id = ?
+                """,
+                (
+                    state.status.value,
+                    current_zone,
+                    zone_entered_at,
+                    int(state.dwell_alerted),
+                    state.telemetry.tag_id,
                 ),
             )
 
@@ -218,22 +294,9 @@ class SQLiteStorage:
         self,
         state: AssetState,
     ) -> None:
-        async with aiosqlite.connect(
-            self._database_path
-        ) as database:
-            await database.execute(
-                """
-                UPDATE asset_state
-                SET status = ?
-                WHERE tag_id = ?
-                """,
-                (
-                    state.status.value,
-                    state.telemetry.tag_id,
-                ),
-            )
-
-            await database.commit()
+        await self.update_asset_runtime_state(
+            state
+        )
 
     async def save_zone_transition(
         self,
@@ -294,6 +357,135 @@ class SQLiteStorage:
 
             await database.commit()
 
+    async def save_rule_alert(
+        self,
+        alert: RuleAlert,
+    ) -> None:
+        zone = (
+            alert.zone.value
+            if alert.zone is not None
+            else None
+        )
+
+        async with aiosqlite.connect(
+            self._database_path
+        ) as database:
+            await database.execute(
+                """
+                INSERT INTO alerts (
+                    tag_id,
+                    alert_type,
+                    severity,
+                    occurred_at,
+                    sequence_number,
+                    zone,
+                    message,
+                    details_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    alert.tag_id,
+                    alert.type.value,
+                    alert.severity.value,
+                    alert.occurred_at.isoformat(),
+                    alert.sequence_number,
+                    zone,
+                    alert.message,
+                    json.dumps(
+                        alert.details,
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
+            await database.commit()
+
+    async def load_alerts(
+        self,
+        *,
+        tag_id: str | None = None,
+        limit: int = 50,
+    ) -> list[RuleAlert]:
+        if tag_id is None:
+            query = """
+                SELECT
+                    alert_type,
+                    severity,
+                    tag_id,
+                    occurred_at,
+                    sequence_number,
+                    zone,
+                    message,
+                    details_json
+                FROM alerts
+                ORDER BY id DESC
+                LIMIT ?
+            """
+
+            parameters = (limit,)
+        else:
+            query = """
+                SELECT
+                    alert_type,
+                    severity,
+                    tag_id,
+                    occurred_at,
+                    sequence_number,
+                    zone,
+                    message,
+                    details_json
+                FROM alerts
+                WHERE tag_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            """
+
+            parameters = (
+                tag_id,
+                limit,
+            )
+
+        async with aiosqlite.connect(
+            self._database_path
+        ) as database:
+            async with database.execute(
+                query,
+                parameters,
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        return [
+            RuleAlert(
+                type=RuleAlertType(alert_type),
+                severity=AlertSeverity(severity),
+                tag_id=row_tag_id,
+                occurred_at=datetime.fromisoformat(
+                    occurred_at
+                ),
+                sequence_number=sequence_number,
+                zone=(
+                    ZoneName(zone)
+                    if zone is not None
+                    else None
+                ),
+                message=message,
+                details=json.loads(
+                    details_json
+                ),
+            )
+            for (
+                alert_type,
+                severity,
+                row_tag_id,
+                occurred_at,
+                sequence_number,
+                zone,
+                message,
+                details_json,
+            ) in rows
+        ]
+
     async def load_asset_states(
         self,
     ) -> list[AssetState]:
@@ -307,7 +499,8 @@ class SQLiteStorage:
                     last_seen,
                     status,
                     current_zone,
-                    zone_entered_at
+                    zone_entered_at,
+                    dwell_alerted
                 FROM asset_state
                 ORDER BY tag_id
                 """
@@ -321,6 +514,7 @@ class SQLiteStorage:
                 status=status,
                 current_zone=current_zone,
                 zone_entered_at=zone_entered_at,
+                dwell_alerted=dwell_alerted,
             )
             for (
                 payload_json,
@@ -328,6 +522,7 @@ class SQLiteStorage:
                 status,
                 current_zone,
                 zone_entered_at,
+                dwell_alerted,
             ) in rows
         ]
 
@@ -345,7 +540,8 @@ class SQLiteStorage:
                     last_seen,
                     status,
                     current_zone,
-                    zone_entered_at
+                    zone_entered_at,
+                    dwell_alerted
                 FROM asset_state
                 WHERE tag_id = ?
                 """,
@@ -362,6 +558,7 @@ class SQLiteStorage:
             status,
             current_zone,
             zone_entered_at,
+            dwell_alerted,
         ) = row
 
         return self._build_asset_state(
@@ -370,6 +567,7 @@ class SQLiteStorage:
             status=status,
             current_zone=current_zone,
             zone_entered_at=zone_entered_at,
+            dwell_alerted=dwell_alerted,
         )
 
     async def load_telemetry_history(
@@ -482,25 +680,40 @@ class SQLiteStorage:
         ]
 
     async def telemetry_count(self) -> int:
-        async with aiosqlite.connect(
-            self._database_path
-        ) as database:
-            async with database.execute(
-                "SELECT COUNT(*) FROM telemetry"
-            ) as cursor:
-                row = await cursor.fetchone()
-
-        if row is None:
-            return 0
-
-        return int(row[0])
+        return await self._count_rows(
+            "telemetry"
+        )
 
     async def zone_transition_count(self) -> int:
+        return await self._count_rows(
+            "zone_transitions"
+        )
+
+    async def alert_count(self) -> int:
+        return await self._count_rows(
+            "alerts"
+        )
+
+    async def _count_rows(
+        self,
+        table_name: str,
+    ) -> int:
+        allowed_tables = {
+            "telemetry",
+            "zone_transitions",
+            "alerts",
+        }
+
+        if table_name not in allowed_tables:
+            raise ValueError(
+                "Unsupported table"
+            )
+
         async with aiosqlite.connect(
             self._database_path
         ) as database:
             async with database.execute(
-                "SELECT COUNT(*) FROM zone_transitions"
+                f"SELECT COUNT(*) FROM {table_name}"
             ) as cursor:
                 row = await cursor.fetchone()
 
@@ -543,6 +756,7 @@ class SQLiteStorage:
         status: str,
         current_zone: str | None,
         zone_entered_at: str | None,
+        dwell_alerted: int,
     ) -> AssetState:
         telemetry = (
             TelemetryMessage.model_validate_json(
@@ -567,5 +781,8 @@ class SQLiteStorage:
                 )
                 if zone_entered_at is not None
                 else None
+            ),
+            dwell_alerted=bool(
+                dwell_alerted
             ),
         )

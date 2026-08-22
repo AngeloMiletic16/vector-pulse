@@ -11,9 +11,13 @@ from fastapi import (
 from starlette.types import Lifespan
 
 from vector_pulse.api.schemas import (
+    AlertResponse,
     AssetStateResponse,
+    DwellPolicyResponse,
     GeofenceResponse,
     HealthResponse,
+    MonitoringRulesResponse,
+    MovementRulesResponse,
     TelemetryHistoryResponse,
     ZoneResponse,
     ZoneTransitionResponse,
@@ -25,6 +29,12 @@ from vector_pulse.application.geofencing import (
     GeofenceService,
     create_default_geofence,
 )
+from vector_pulse.application.rules import (
+    DwellRuleEngine,
+    MovementRuleEngine,
+    create_default_dwell_rules,
+    create_default_movement_rules,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
@@ -34,6 +44,8 @@ def create_app(
     storage: SQLiteStorage,
     broadcaster: EventBroadcaster | None = None,
     geofence: GeofenceService | None = None,
+    dwell_rules: DwellRuleEngine | None = None,
+    movement_rules: MovementRuleEngine | None = None,
     *,
     lifespan: Lifespan[FastAPI] | None = None,
 ) -> FastAPI:
@@ -42,6 +54,12 @@ def create_app(
 
     if geofence is None:
         geofence = create_default_geofence()
+
+    if dwell_rules is None:
+        dwell_rules = create_default_dwell_rules()
+
+    if movement_rules is None:
+        movement_rules = create_default_movement_rules()
 
     app = FastAPI(
         title="VectorPulse API",
@@ -87,6 +105,38 @@ def create_app(
         )
 
     @app.get(
+        "/monitoring-rules",
+        response_model=MonitoringRulesResponse,
+    )
+    async def get_monitoring_rules(
+    ) -> MonitoringRulesResponse:
+        movement_config = movement_rules.config
+
+        return MonitoringRulesResponse(
+            dwell_policies=[
+                DwellPolicyResponse(
+                    zone=policy.zone,
+                    threshold_seconds=(
+                        policy.threshold_seconds
+                    ),
+                    severity=policy.severity,
+                )
+                for policy in dwell_rules.policies
+            ],
+            movement=MovementRulesResponse(
+                max_reported_speed_mps=(
+                    movement_config.max_reported_speed_mps
+                ),
+                max_calculated_speed_mps=(
+                    movement_config.max_calculated_speed_mps
+                ),
+                minimum_time_delta_seconds=(
+                    movement_config.minimum_time_delta_seconds
+                ),
+            ),
+        )
+
+    @app.get(
         "/assets",
         response_model=list[AssetStateResponse],
     )
@@ -101,6 +151,7 @@ def create_app(
                 zone_entered_at=(
                     state.zone_entered_at
                 ),
+                dwell_alerted=state.dwell_alerted,
                 telemetry=state.telemetry,
             )
             for state in states
@@ -130,6 +181,7 @@ def create_app(
             zone_entered_at=(
                 state.zone_entered_at
             ),
+            dwell_alerted=state.dwell_alerted,
             telemetry=state.telemetry,
         )
 
@@ -222,6 +274,84 @@ def create_app(
             for item in transitions
         ]
 
+    @app.get(
+        "/alerts",
+        response_model=list[AlertResponse],
+    )
+    async def list_alerts(
+        limit: Annotated[
+            int,
+            Query(
+                ge=1,
+                le=200,
+            ),
+        ] = 50,
+    ) -> list[AlertResponse]:
+        alerts = await storage.load_alerts(
+            limit=limit
+        )
+
+        return [
+            AlertResponse(
+                type=alert.type,
+                severity=alert.severity,
+                tag_id=alert.tag_id,
+                occurred_at=alert.occurred_at,
+                sequence_number=(
+                    alert.sequence_number
+                ),
+                zone=alert.zone,
+                message=alert.message,
+                details=alert.details,
+            )
+            for alert in alerts
+        ]
+
+    @app.get(
+        "/assets/{tag_id}/alerts",
+        response_model=list[AlertResponse],
+    )
+    async def get_asset_alerts(
+        tag_id: str,
+        limit: Annotated[
+            int,
+            Query(
+                ge=1,
+                le=200,
+            ),
+        ] = 50,
+    ) -> list[AlertResponse]:
+        state = await storage.get_asset_state(
+            tag_id
+        )
+
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Asset not found",
+            )
+
+        alerts = await storage.load_alerts(
+            tag_id=tag_id,
+            limit=limit,
+        )
+
+        return [
+            AlertResponse(
+                type=alert.type,
+                severity=alert.severity,
+                tag_id=alert.tag_id,
+                occurred_at=alert.occurred_at,
+                sequence_number=(
+                    alert.sequence_number
+                ),
+                zone=alert.zone,
+                message=alert.message,
+                details=alert.details,
+            )
+            for alert in alerts
+        ]
+
     @app.websocket("/ws/assets")
     async def asset_events(
         websocket: WebSocket,
@@ -282,7 +412,19 @@ def create_app(
             )
 
             for task in done:
-                task.result()
+                if task.cancelled():
+                    continue
+
+                exception = task.exception()
+
+                if exception is not None and not isinstance(
+                        exception,
+                        (
+                                WebSocketDisconnect,
+                                RuntimeError,
+                        ),
+                ):
+                    raise exception
 
         except (
             WebSocketDisconnect,
