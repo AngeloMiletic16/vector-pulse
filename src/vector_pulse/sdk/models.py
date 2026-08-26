@@ -1,11 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import TypeAlias
 
 from pydantic import BaseModel, ConfigDict
 
-
-AlertDetailValue: TypeAlias = str | int | float | bool
+type AlertDetailValue = str | int | float | bool
 
 
 class SDKModel(BaseModel):

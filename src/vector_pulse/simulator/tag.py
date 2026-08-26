@@ -1,6 +1,6 @@
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import random
 
 from vector_pulse.ingestion.schemas import (
     Condition,

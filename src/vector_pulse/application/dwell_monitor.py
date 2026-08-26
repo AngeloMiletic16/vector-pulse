@@ -16,7 +16,6 @@ from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
 
-
 DWELL_CHECK_INTERVAL_SECONDS = 2.0
 
 

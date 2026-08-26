@@ -2,55 +2,105 @@ import asyncio
 
 import aiomqtt
 
-from vector_pulse.simulator.tag import SimulatedTag
+from vector_pulse.settings import (
+    VectorPulseSettings,
+)
+from vector_pulse.simulator.tag import (
+    SimulatedTag,
+)
 
-
-MQTT_HOST = "localhost"
-MQTT_PORT = 1883
-PUBLISH_INTERVAL_SECONDS = 1.0
 TAG_COUNT = 5
+PUBLISH_INTERVAL_SECONDS = 1.0
 
-async def run_tag(tag: SimulatedTag) -> None:
+
+def create_tags(
+    count: int,
+) -> list[SimulatedTag]:
+    if count < 1:
+        raise ValueError(
+            "Tag count must be at least 1"
+        )
+
+    return [
+        SimulatedTag(
+            tag_id=f"tag-{index:03d}"
+        )
+        for index in range(
+            1,
+            count + 1,
+        )
+    ]
+
+
+async def run_tag(
+    tag: SimulatedTag,
+    *,
+    mqtt_host: str,
+    mqtt_port: int,
+) -> None:
     async with aiomqtt.Client(
-        hostname=MQTT_HOST,
-        port=MQTT_PORT,
+        hostname=mqtt_host,
+        port=mqtt_port,
     ) as client:
         while True:
             telemetry = tag.next_telemetry()
 
-            topic = f"vectorpulse/assets/{tag.tag_id}/telemetry"
-            payload = telemetry.model_dump_json()
+            topic = (
+                "vectorpulse/assets/"
+                f"{tag.tag_id}/telemetry"
+            )
 
-            await client.publish(topic, payload=payload)
+            await client.publish(
+                topic,
+                telemetry.model_dump_json(),
+            )
 
             print(
                 f"Published tag={tag.tag_id} "
-                f"sequence={telemetry.sequence_number} "
-                f"x={telemetry.position.x:.2f} "
-                f"y={telemetry.position.y:.2f}"
+                f"sequence="
+                f"{telemetry.sequence_number} "
+                f"mqtt="
+                f"{mqtt_host}:{mqtt_port}"
             )
 
-            await asyncio.sleep(PUBLISH_INTERVAL_SECONDS)
+            await asyncio.sleep(
+                PUBLISH_INTERVAL_SECONDS
+            )
 
-def create_tags(count: int) -> list[SimulatedTag]:
-    if count < 1:
-        raise ValueError("Tag count must be at least 1")
-
-    return [
-        SimulatedTag(tag_id=f"tag-{index:03d}")
-        for index in range(1, count + 1)
-    ]
 
 async def main() -> None:
-    tags = create_tags(TAG_COUNT)
+    settings = (
+        VectorPulseSettings.from_env()
+    )
+
+    tags = create_tags(
+        TAG_COUNT
+    )
+
+    print(
+        f"Starting {len(tags)} simulated "
+        "VectorPulse tags"
+    )
 
     async with asyncio.TaskGroup() as task_group:
         for tag in tags:
             task_group.create_task(
-                run_tag(tag),
-                name=f"simulator-{tag.tag_id}",
+                run_tag(
+                    tag,
+                    mqtt_host=(
+                        settings.mqtt_host
+                    ),
+                    mqtt_port=(
+                        settings.mqtt_port
+                    ),
+                ),
+                name=(
+                    f"simulator-{tag.tag_id}"
+                ),
             )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(
+        main()
+    )

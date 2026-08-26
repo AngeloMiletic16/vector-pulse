@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Self
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -78,7 +79,7 @@ class VectorPulseClient:
 
     async def __aenter__(
         self,
-    ) -> "VectorPulseClient":
+    ) -> Self:
         return self
 
     async def __aexit__(

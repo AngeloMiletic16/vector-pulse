@@ -13,7 +13,6 @@ from vector_pulse.sdk import (
     AlertType,
     AssetState,
     GeofenceConfiguration,
-    HealthStatus,
     LiveEvent,
     MonitoringRules,
     TelemetryHistoryItem,
@@ -21,7 +20,6 @@ from vector_pulse.sdk import (
     VectorPulseClient,
     VectorPulseConnectionError,
 )
-
 
 T = TypeVar("T")
 
@@ -86,7 +84,7 @@ def _settings(
     )
 
 
-def _run(
+def _run[T](
     coroutine: Coroutine[Any, Any, T],
 ) -> T:
     try:

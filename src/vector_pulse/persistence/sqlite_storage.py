@@ -448,12 +448,11 @@ class SQLiteStorage:
 
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                query,
-                parameters,
-            ) as cursor:
-                rows = await cursor.fetchall()
+        ) as database, database.execute(
+            query,
+            parameters,
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         return [
             RuleAlert(
@@ -491,9 +490,8 @@ class SQLiteStorage:
     ) -> list[AssetState]:
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                """
+        ) as database, database.execute(
+            """
                 SELECT
                     payload_json,
                     last_seen,
@@ -504,8 +502,8 @@ class SQLiteStorage:
                 FROM asset_state
                 ORDER BY tag_id
                 """
-            ) as cursor:
-                rows = await cursor.fetchall()
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         return [
             self._build_asset_state(
@@ -532,9 +530,8 @@ class SQLiteStorage:
     ) -> AssetState | None:
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                """
+        ) as database, database.execute(
+            """
                 SELECT
                     payload_json,
                     last_seen,
@@ -545,9 +542,9 @@ class SQLiteStorage:
                 FROM asset_state
                 WHERE tag_id = ?
                 """,
-                (tag_id,),
-            ) as cursor:
-                row = await cursor.fetchone()
+            (tag_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
 
         if row is None:
             return None
@@ -577,9 +574,8 @@ class SQLiteStorage:
     ) -> list[StoredTelemetry]:
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                """
+        ) as database, database.execute(
+            """
                 SELECT
                     payload_json,
                     received_at,
@@ -589,12 +585,12 @@ class SQLiteStorage:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (
-                    tag_id,
-                    limit,
-                ),
-            ) as cursor:
-                rows = await cursor.fetchall()
+            (
+                tag_id,
+                limit,
+            ),
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         return [
             StoredTelemetry(
@@ -626,9 +622,8 @@ class SQLiteStorage:
     ) -> list[StoredZoneTransition]:
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                """
+        ) as database, database.execute(
+            """
                 SELECT
                     event_type,
                     zone,
@@ -641,12 +636,12 @@ class SQLiteStorage:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (
-                    tag_id,
-                    limit,
-                ),
-            ) as cursor:
-                rows = await cursor.fetchall()
+            (
+                tag_id,
+                limit,
+            ),
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         return [
             StoredZoneTransition(
@@ -711,11 +706,10 @@ class SQLiteStorage:
 
         async with aiosqlite.connect(
             self._database_path
-        ) as database:
-            async with database.execute(
-                f"SELECT COUNT(*) FROM {table_name}"
-            ) as cursor:
-                row = await cursor.fetchone()
+        ) as database, database.execute(
+            f"SELECT COUNT(*) FROM {table_name}"
+        ) as cursor:
+            row = await cursor.fetchone()
 
         if row is None:
             return 0

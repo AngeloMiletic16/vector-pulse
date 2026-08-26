@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from math import hypot
-from typing import TypeAlias
 
 from vector_pulse.application.asset_registry import (
     AssetState,
@@ -10,8 +9,7 @@ from vector_pulse.application.asset_registry import (
 )
 from vector_pulse.application.geofencing import ZoneName
 
-
-AlertDetailValue: TypeAlias = str | int | float | bool
+type AlertDetailValue = str | int | float | bool
 
 
 class AlertSeverity(str, Enum):

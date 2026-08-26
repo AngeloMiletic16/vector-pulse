@@ -16,7 +16,6 @@ from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
 
-
 OFFLINE_AFTER_SECONDS = 15.0
 OFFLINE_CHECK_INTERVAL_SECONDS = 2.0
 

@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -35,32 +34,37 @@ from vector_pulse.application.rules import (
 from vector_pulse.ingestion.mqtt_consumer import (
     consume_telemetry,
 )
-from vector_pulse.ingestion.schemas import TelemetryMessage
+from vector_pulse.ingestion.schemas import (
+    TelemetryMessage,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
-
-
-TELEMETRY_QUEUE_MAX_SIZE = 1000
-DATABASE_PATH = Path("data/vectorpulse.db")
-
-API_HOST = "127.0.0.1"
-API_PORT = 8000
+from vector_pulse.settings import (
+    VectorPulseSettings,
+)
 
 
 async def run_gateway_tasks(
-    telemetry_queue: asyncio.Queue[TelemetryMessage],
+    telemetry_queue: asyncio.Queue[
+        TelemetryMessage
+    ],
     registry: AssetRegistry,
     storage: SQLiteStorage,
     broadcaster: EventBroadcaster,
     geofence: GeofenceService,
     dwell_rules: DwellRuleEngine,
     movement_rules: MovementRuleEngine,
+    *,
+    mqtt_host: str,
+    mqtt_port: int,
 ) -> None:
     async with asyncio.TaskGroup() as task_group:
         task_group.create_task(
             consume_telemetry(
-                telemetry_queue
+                telemetry_queue,
+                mqtt_host=mqtt_host,
+                mqtt_port=mqtt_port,
             ),
             name="mqtt-consumer",
         )
@@ -97,16 +101,28 @@ async def run_gateway_tasks(
         )
 
 
-def create_gateway_app() -> FastAPI:
+def create_gateway_app(
+    settings: VectorPulseSettings | None = None,
+) -> FastAPI:
+    runtime_settings = (
+        settings
+        if settings is not None
+        else VectorPulseSettings.from_env()
+    )
+
     storage = SQLiteStorage(
-        DATABASE_PATH
+        runtime_settings.database_path
     )
 
     registry = AssetRegistry()
     broadcaster = EventBroadcaster()
 
     geofence = create_default_geofence()
-    dwell_rules = create_default_dwell_rules()
+
+    dwell_rules = (
+        create_default_dwell_rules()
+    )
+
     movement_rules = (
         create_default_movement_rules()
     )
@@ -114,7 +130,10 @@ def create_gateway_app() -> FastAPI:
     telemetry_queue: asyncio.Queue[
         TelemetryMessage
     ] = asyncio.Queue(
-        maxsize=TELEMETRY_QUEUE_MAX_SIZE
+        maxsize=(
+            runtime_settings
+            .telemetry_queue_max_size
+        )
     )
 
     @asynccontextmanager
@@ -133,18 +152,33 @@ def create_gateway_app() -> FastAPI:
                 force_offline=True,
             )
 
-            restored_state = registry.get_state(
-                state.telemetry.tag_id
+            restored_state = (
+                registry.get_state(
+                    state.telemetry.tag_id
+                )
             )
 
             if restored_state is not None:
-                await storage.update_asset_status(
-                    restored_state
+                await (
+                    storage
+                    .update_asset_status(
+                        restored_state
+                    )
                 )
 
         print(
-            f"Restored {registry.asset_count()} "
-            f"persisted asset states"
+            f"Restored "
+            f"{registry.asset_count()} "
+            "persisted asset states"
+        )
+
+        print(
+            "VectorPulse runtime "
+            f"mqtt="
+            f"{runtime_settings.mqtt_host}:"
+            f"{runtime_settings.mqtt_port} "
+            f"database="
+            f"{runtime_settings.database_path}"
         )
 
         gateway_task = asyncio.create_task(
@@ -156,6 +190,12 @@ def create_gateway_app() -> FastAPI:
                 geofence,
                 dwell_rules,
                 movement_rules,
+                mqtt_host=(
+                    runtime_settings.mqtt_host
+                ),
+                mqtt_port=(
+                    runtime_settings.mqtt_port
+                ),
             ),
             name="gateway-runtime",
         )
@@ -181,13 +221,19 @@ def create_gateway_app() -> FastAPI:
     )
 
 
-app = create_gateway_app()
+SETTINGS = (
+    VectorPulseSettings.from_env()
+)
+
+app = create_gateway_app(
+    SETTINGS
+)
 
 
 if __name__ == "__main__":
     uvicorn.run(
         app,
-        host=API_HOST,
-        port=API_PORT,
+        host=SETTINGS.api_host,
+        port=SETTINGS.api_port,
         log_level="info",
     )

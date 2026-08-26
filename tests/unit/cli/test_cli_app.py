@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Self
 
 import pytest
 from typer.testing import CliRunner
@@ -23,7 +24,6 @@ from vector_pulse.sdk.models import (
     Position,
     TelemetryMessage,
 )
-
 
 runner = CliRunner()
 
@@ -98,7 +98,7 @@ class FakeClient:
 
     async def __aenter__(
         self,
-    ) -> "FakeClient":
+    ) -> Self:
         return self
 
     async def __aexit__(

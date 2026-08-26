@@ -2,12 +2,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from vector_pulse.api.app import create_app
 from vector_pulse.application.asset_registry import (
     AssetState,
     AssetStatus,
+)
+from vector_pulse.application.event_broadcaster import (
+    EventBroadcaster,
 )
 from vector_pulse.ingestion.schemas import (
     Condition,
@@ -17,11 +21,6 @@ from vector_pulse.ingestion.schemas import (
 )
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
-)
-from fastapi.testclient import TestClient
-
-from vector_pulse.application.event_broadcaster import (
-    EventBroadcaster,
 )
 
 
@@ -259,15 +258,14 @@ def test_websocket_accepts_connection(
         broadcaster,
     )
 
-    with TestClient(app) as client:
-        with client.websocket_connect(
-            "/ws/assets"
-        ) as websocket:
-            message = websocket.receive_json()
+    with TestClient(app) as client, client.websocket_connect(
+        "/ws/assets"
+    ) as websocket:
+        message = websocket.receive_json()
 
-            assert message == {
-                "type": "connected",
-                "message": (
-                    "Subscribed to live asset events"
-                ),
-            }
+        assert message == {
+            "type": "connected",
+            "message": (
+                "Subscribed to live asset events"
+            ),
+        }

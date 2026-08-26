@@ -1,10 +1,106 @@
+name: vectorpulse
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2
-    container_name: vectorpulse-mosquitto
+    restart: unless-stopped
 
     ports:
       - "1883:1883"
 
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mosquitto_pub",
+          "-h",
+          "localhost",
+          "-p",
+          "1883",
+          "-t",
+          "vectorpulse/health",
+          "-m",
+          "ping",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: vectorpulse:local
+
+    restart: unless-stopped
+    init: true
+
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+    environment:
+      VECTORPULSE_MQTT_HOST: mosquitto
+      VECTORPULSE_MQTT_PORT: "1883"
+
+      VECTORPULSE_DATABASE_PATH: /app/data/vectorpulse.db
+
+      VECTORPULSE_API_HOST: 0.0.0.0
+      VECTORPULSE_API_PORT: "8000"
+
+      VECTORPULSE_TELEMETRY_QUEUE_MAX_SIZE: "1000"
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - vectorpulse-data:/app/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  simulator:
+    image: vectorpulse:local
+
+    profiles:
+      - demo
+
+    restart: unless-stopped
+    init: true
+
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+      backend:
+        condition: service_healthy
+
+    environment:
+      VECTORPULSE_MQTT_HOST: mosquitto
+      VECTORPULSE_MQTT_PORT: "1883"
+
+    command:
+      [
+        "python",
+        "-m",
+        "vector_pulse.simulator.publisher",
+      ]
+
+
+volumes:
+  vectorpulse-data:
