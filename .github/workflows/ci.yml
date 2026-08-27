@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  UV_VERSION: "0.12.5"
+
+jobs:
+  quality:
+    name: Python quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python
+        run: uv python install "${PYTHON_VERSION}"
+
+      - name: Install project dependencies
+        run: uv sync --locked --dev
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+      - name: Verify CLI entrypoint
+        run: uv run vectorpulse --help > /dev/null
+
+      - name: Verify SDK import
+        run: |
+          uv run python - <<'PY'
+          from vector_pulse.sdk import VectorPulseClient
+
+          client = VectorPulseClient
+          print(f"SDK import OK: {client.__name__}")
+          PY
+
+      - name: Build Python package
+        run: uv build
+
+  docker:
+    name: Docker integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    needs:
+      - quality
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+
+      - name: Validate core Compose configuration
+        run: docker compose config > /dev/null
+
+      - name: Validate demo Compose configuration
+        run: docker compose --profile demo config > /dev/null
+
+      - name: Build VectorPulse image
+        run: docker compose build --pull
+
+      - name: Run Docker smoke test
+        run: ./scripts/ci/docker_smoke_test.sh
