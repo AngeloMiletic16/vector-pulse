@@ -37,6 +37,10 @@ from vector_pulse.ingestion.mqtt_consumer import (
 from vector_pulse.ingestion.schemas import (
     TelemetryMessage,
 )
+from vector_pulse.ml import AnomalyService
+from vector_pulse.persistence.ml_repository import (
+    MLTrainingRepository,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
@@ -55,6 +59,7 @@ async def run_gateway_tasks(
     geofence: GeofenceService,
     dwell_rules: DwellRuleEngine,
     movement_rules: MovementRuleEngine,
+    anomaly_service: AnomalyService,
     *,
     mqtt_host: str,
     mqtt_port: int,
@@ -77,6 +82,7 @@ async def run_gateway_tasks(
                 broadcaster,
                 geofence,
                 movement_rules,
+                anomaly_service=anomaly_service,
             ),
             name="telemetry-processor",
         )
@@ -114,6 +120,20 @@ def create_gateway_app(
         runtime_settings.database_path
     )
 
+    training_repository = MLTrainingRepository(
+        runtime_settings.database_path
+    )
+
+    anomaly_model_path = (
+        runtime_settings.database_path.parent
+        / "anomaly_detector.joblib"
+    )
+
+    anomaly_service = AnomalyService(
+        training_repository,
+        anomaly_model_path,
+    )
+
     registry = AssetRegistry()
     broadcaster = EventBroadcaster()
 
@@ -141,6 +161,18 @@ def create_gateway_app(
         _: FastAPI,
     ) -> AsyncIterator[None]:
         await storage.initialize()
+
+        await anomaly_service.initialize()
+
+        anomaly_status = (
+            anomaly_service.status()
+        )
+
+        print(
+            "ML anomaly detector "
+            f"ready={anomaly_status.ready} "
+            f"model={anomaly_status.model_path}"
+        )
 
         persisted_states = (
             await storage.load_asset_states()
@@ -190,6 +222,7 @@ def create_gateway_app(
                 geofence,
                 dwell_rules,
                 movement_rules,
+                anomaly_service,
                 mqtt_host=(
                     runtime_settings.mqtt_host
                 ),
@@ -217,6 +250,7 @@ def create_gateway_app(
         geofence,
         dwell_rules,
         movement_rules,
+        anomaly_service,
         lifespan=lifespan,
     )
 

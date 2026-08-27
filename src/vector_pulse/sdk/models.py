@@ -33,6 +33,7 @@ class AlertType(str, Enum):
     DWELL_TIME_EXCEEDED = "dwell_time_exceeded"
     EXCESSIVE_SPEED = "excessive_speed"
     IMPOSSIBLE_MOVEMENT = "impossible_movement"
+    ANOMALY_DETECTED = "anomaly_detected"
 
 
 class Position(SDKModel):
@@ -62,6 +63,18 @@ class TelemetryMessage(SDKModel):
 
 class HealthStatus(SDKModel):
     status: str
+
+
+class AnomalyModelStatus(SDKModel):
+    ready: bool
+    training: bool
+    model_path: str
+
+    trained_at: datetime | None
+    sample_count: int | None
+    nu: float | None
+
+    feature_names: list[str] | None
 
 
 class AssetState(SDKModel):

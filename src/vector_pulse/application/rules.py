@@ -21,6 +21,7 @@ class RuleAlertType(str, Enum):
     DWELL_TIME_EXCEEDED = "dwell_time_exceeded"
     EXCESSIVE_SPEED = "excessive_speed"
     IMPOSSIBLE_MOVEMENT = "impossible_movement"
+    ANOMALY_DETECTED = "anomaly_detected"
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ class DwellRuleEngine:
             ),
             zone=state.current_zone,
             message=(
-                f"Asset exceeded dwell threshold "
+                "Asset exceeded dwell threshold "
                 f"in {state.current_zone.value}"
             ),
             details={

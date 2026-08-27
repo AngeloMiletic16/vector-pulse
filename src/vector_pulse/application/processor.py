@@ -2,6 +2,7 @@ import asyncio
 
 from vector_pulse.application.asset_registry import (
     AssetRegistry,
+    AssetState,
     UpdateStatus,
 )
 from vector_pulse.application.event_broadcaster import (
@@ -15,13 +16,80 @@ from vector_pulse.application.geofencing import (
     GeofenceService,
 )
 from vector_pulse.application.rules import (
+    AlertSeverity,
     MovementRuleEngine,
+    RuleAlert,
+    RuleAlertType,
     create_default_movement_rules,
 )
 from vector_pulse.ingestion.schemas import TelemetryMessage
+from vector_pulse.ml import (
+    AnomalyDetection,
+    AnomalyService,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
+
+
+def _build_anomaly_alert(
+    detection: AnomalyDetection,
+    state: AssetState,
+) -> RuleAlert:
+    details = {
+        "anomaly_score": round(
+            detection.anomaly_score,
+            6,
+        ),
+        "decision_function": round(
+            detection.decision_function,
+            6,
+        ),
+        "model_trained_at": (
+            detection.model_trained_at.isoformat()
+        ),
+        "model_sample_count": (
+            detection.model_sample_count
+        ),
+    }
+
+    details.update(
+        detection.feature_values
+    )
+
+    return RuleAlert(
+        type=RuleAlertType.ANOMALY_DETECTED,
+        severity=AlertSeverity.WARNING,
+        tag_id=detection.tag_id,
+        occurred_at=detection.occurred_at,
+        sequence_number=(
+            detection.sequence_number
+        ),
+        zone=state.current_zone,
+        message=(
+            "ML model detected anomalous "
+            "asset telemetry"
+        ),
+        details=details,
+    )
+
+
+async def _publish_alert(
+    alert: RuleAlert,
+    state: AssetState,
+    storage: SQLiteStorage,
+    broadcaster: EventBroadcaster,
+) -> None:
+    await storage.save_rule_alert(
+        alert
+    )
+
+    await broadcaster.publish(
+        AssetEvent.from_rule_alert(
+            alert,
+            state,
+        )
+    )
 
 
 async def process_telemetry(
@@ -31,6 +99,7 @@ async def process_telemetry(
     broadcaster: EventBroadcaster,
     geofence: GeofenceService,
     movement_rules: MovementRuleEngine | None = None,
+    anomaly_service: AnomalyService | None = None,
 ) -> None:
     if movement_rules is None:
         movement_rules = (
@@ -68,7 +137,7 @@ async def process_telemetry(
                 is UpdateStatus.OUT_OF_ORDER
             ):
                 print(
-                    f"Dropped out-of-order telemetry "
+                    "Dropped out-of-order telemetry "
                     f"tag={telemetry.tag_id} "
                     f"sequence={telemetry.sequence_number}"
                 )
@@ -104,9 +173,9 @@ async def process_telemetry(
                 )
             else:
                 print(
-                    f"Ignored low-quality position "
+                    "Ignored low-quality position "
                     f"tag={telemetry.tag_id} "
-                    f"quality="
+                    "quality="
                     f"{telemetry.position.quality:.2f}"
                 )
 
@@ -125,7 +194,7 @@ async def process_telemetry(
 
             if result.came_online:
                 print(
-                    f"Asset back online "
+                    "Asset back online "
                     f"tag={telemetry.tag_id}"
                 )
 
@@ -142,29 +211,57 @@ async def process_telemetry(
                 is UpdateStatus.GAP_DETECTED
             ):
                 print(
-                    f"Sequence gap detected "
+                    "Sequence gap detected "
                     f"tag={telemetry.tag_id} "
                     f"missing={result.missing_messages}"
                 )
 
             for alert in movement_alerts:
-                await storage.save_rule_alert(
-                    alert
-                )
-
-                await broadcaster.publish(
-                    AssetEvent.from_rule_alert(
-                        alert,
-                        state,
-                    )
+                await _publish_alert(
+                    alert,
+                    state,
+                    storage,
+                    broadcaster,
                 )
 
                 print(
-                    f"Movement alert "
+                    "Movement alert "
                     f"type={alert.type.value} "
                     f"tag={alert.tag_id} "
                     f"severity={alert.severity.value}"
                 )
+
+            if anomaly_service is not None:
+                detection = (
+                    anomaly_service.evaluate(
+                        telemetry,
+                        occurred_at=state.last_seen,
+                    )
+                )
+
+                if detection is not None:
+                    anomaly_alert = (
+                        _build_anomaly_alert(
+                            detection,
+                            state,
+                        )
+                    )
+
+                    await _publish_alert(
+                        anomaly_alert,
+                        state,
+                        storage,
+                        broadcaster,
+                    )
+
+                    print(
+                        "ML anomaly alert "
+                        f"tag={anomaly_alert.tag_id} "
+                        "sequence="
+                        f"{anomaly_alert.sequence_number} "
+                        "score="
+                        f"{detection.anomaly_score:.6f}"
+                    )
 
             if transition.changed:
                 if (
@@ -194,9 +291,9 @@ async def process_telemetry(
                     )
 
                     print(
-                        f"Zone exited "
+                        "Zone exited "
                         f"tag={telemetry.tag_id} "
-                        f"zone="
+                        "zone="
                         f"{transition.exited_zone.value}"
                     )
 
@@ -227,9 +324,9 @@ async def process_telemetry(
                     )
 
                     print(
-                        f"Zone entered "
+                        "Zone entered "
                         f"tag={telemetry.tag_id} "
-                        f"zone="
+                        "zone="
                         f"{transition.entered_zone.value}"
                     )
 
@@ -253,7 +350,7 @@ async def process_telemetry(
                 f"x={telemetry.position.x:.2f} "
                 f"y={telemetry.position.y:.2f} "
                 f"zone={current_zone} "
-                f"battery="
+                "battery="
                 f"{telemetry.condition.battery_percent:.1f}%"
             )
 

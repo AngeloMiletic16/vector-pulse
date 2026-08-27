@@ -12,6 +12,8 @@ from starlette.types import Lifespan
 
 from vector_pulse.api.schemas import (
     AlertResponse,
+    AnomalyModelStatusResponse,
+    AnomalyTrainingRequest,
     AssetStateResponse,
     DwellPolicyResponse,
     GeofenceResponse,
@@ -35,9 +37,36 @@ from vector_pulse.application.rules import (
     create_default_dwell_rules,
     create_default_movement_rules,
 )
+from vector_pulse.ml import (
+    AnomalyService,
+    AnomalyServiceStatus,
+    InsufficientTrainingDataError,
+)
 from vector_pulse.persistence.sqlite_storage import (
     SQLiteStorage,
 )
+
+
+def _anomaly_status_response(
+    status: AnomalyServiceStatus,
+) -> AnomalyModelStatusResponse:
+    feature_names = (
+        list(status.feature_names)
+        if status.feature_names is not None
+        else None
+    )
+
+    return AnomalyModelStatusResponse(
+        ready=status.ready,
+        training=status.training,
+        model_path=str(
+            status.model_path
+        ),
+        trained_at=status.trained_at,
+        sample_count=status.sample_count,
+        nu=status.nu,
+        feature_names=feature_names,
+    )
 
 
 def create_app(
@@ -46,6 +75,7 @@ def create_app(
     geofence: GeofenceService | None = None,
     dwell_rules: DwellRuleEngine | None = None,
     movement_rules: MovementRuleEngine | None = None,
+    anomaly_service: AnomalyService | None = None,
     *,
     lifespan: Lifespan[FastAPI] | None = None,
 ) -> FastAPI:
@@ -71,6 +101,19 @@ def create_app(
         lifespan=lifespan,
     )
 
+    def require_anomaly_service(
+    ) -> AnomalyService:
+        if anomaly_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "ML anomaly service "
+                    "is not configured"
+                ),
+            )
+
+        return anomaly_service
+
     @app.get(
         "/health",
         response_model=HealthResponse,
@@ -78,6 +121,55 @@ def create_app(
     async def health() -> HealthResponse:
         return HealthResponse(
             status="ok",
+        )
+
+    @app.get(
+        "/ml/anomaly/status",
+        response_model=AnomalyModelStatusResponse,
+    )
+    async def get_anomaly_status(
+    ) -> AnomalyModelStatusResponse:
+        service = (
+            require_anomaly_service()
+        )
+
+        return _anomaly_status_response(
+            service.status()
+        )
+
+    @app.post(
+        "/ml/anomaly/train",
+        response_model=AnomalyModelStatusResponse,
+    )
+    async def train_anomaly_model(
+        request: AnomalyTrainingRequest,
+    ) -> AnomalyModelStatusResponse:
+        service = (
+            require_anomaly_service()
+        )
+
+        try:
+            status = await service.train(
+                limit=request.limit,
+                nu=request.nu,
+            )
+
+        except (
+            InsufficientTrainingDataError
+        ) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=str(exc),
+            ) from exc
+
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=str(exc),
+            ) from exc
+
+        return _anomaly_status_response(
+            status
         )
 
     @app.get(
@@ -379,12 +471,15 @@ def create_app(
                             mode="json"
                         )
                     )
+
                 finally:
                     event_queue.task_done()
 
         async def wait_for_disconnect() -> None:
             while True:
-                message = await websocket.receive()
+                message = (
+                    await websocket.receive()
+                )
 
                 if (
                     message["type"]
@@ -399,7 +494,9 @@ def create_app(
 
         receiver = asyncio.create_task(
             wait_for_disconnect(),
-            name="websocket-disconnect-listener",
+            name=(
+                "websocket-disconnect-listener"
+            ),
         )
 
         try:
@@ -408,7 +505,9 @@ def create_app(
                     sender,
                     receiver,
                 },
-                return_when=asyncio.FIRST_COMPLETED,
+                return_when=(
+                    asyncio.FIRST_COMPLETED
+                ),
             )
 
             for task in done:
@@ -417,12 +516,15 @@ def create_app(
 
                 exception = task.exception()
 
-                if exception is not None and not isinstance(
+                if (
+                    exception is not None
+                    and not isinstance(
                         exception,
                         (
-                                WebSocketDisconnect,
-                                RuntimeError,
+                            WebSocketDisconnect,
+                            RuntimeError,
                         ),
+                    )
                 ):
                     raise exception
 

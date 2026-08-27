@@ -27,6 +27,7 @@ class AssetEventType(str, Enum):
     DWELL_TIME_EXCEEDED = "dwell_time_exceeded"
     EXCESSIVE_SPEED = "excessive_speed"
     IMPOSSIBLE_MOVEMENT = "impossible_movement"
+    ANOMALY_DETECTED = "anomaly_detected"
 
 
 class AssetEvent(BaseModel):

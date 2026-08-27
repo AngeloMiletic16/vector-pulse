@@ -258,14 +258,18 @@ def test_websocket_accepts_connection(
         broadcaster,
     )
 
-    with TestClient(app) as client, client.websocket_connect(
-        "/ws/assets"
-    ) as websocket:
-        message = websocket.receive_json()
+    # Keep lifecycle scopes separate to avoid a WebSocket teardown race.
+    with TestClient(app) as client:  # noqa: SIM117
+        with client.websocket_connect(
+            "/ws/assets"
+        ) as websocket:
+            message = websocket.receive_json()
 
-        assert message == {
-            "type": "connected",
-            "message": (
-                "Subscribed to live asset events"
-            ),
-        }
+            assert message == {
+                "type": "connected",
+                "message": (
+                    "Subscribed to live asset events"
+                ),
+            }
+
+            websocket.close()

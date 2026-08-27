@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from vector_pulse.cli.ml import ml_app
 from vector_pulse.sdk import (
     Alert,
     AlertType,
@@ -52,6 +53,11 @@ app.add_typer(
 app.add_typer(
     events_app,
     name="events",
+)
+
+app.add_typer(
+    ml_app,
+    name="ml",
 )
 
 

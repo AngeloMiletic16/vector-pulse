@@ -13,6 +13,7 @@ from vector_pulse.sdk.exceptions import (
 )
 from vector_pulse.sdk.models import (
     Alert,
+    AnomalyModelStatus,
     AssetState,
     GeofenceConfiguration,
     HealthStatus,
@@ -33,14 +34,17 @@ def build_websocket_url(
 
     if parsed.scheme == "http":
         websocket_scheme = "ws"
+
     elif parsed.scheme == "https":
         websocket_scheme = "wss"
+
     else:
         raise ValueError(
             "Base URL must use http or https"
         )
 
     base_path = parsed.path.rstrip("/")
+
     websocket_path = (
         f"{base_path}/{path.lstrip('/')}"
     )
@@ -62,9 +66,14 @@ class VectorPulseClient:
         base_url: str = "http://127.0.0.1:8000",
         *,
         timeout: float = 10.0,
-        transport: httpx.AsyncBaseTransport | None = None,
+        transport: (
+            httpx.AsyncBaseTransport | None
+        ) = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = (
+            base_url.rstrip("/")
+        )
+
         self._timeout = timeout
 
         self._http = httpx.AsyncClient(
@@ -93,13 +102,53 @@ class VectorPulseClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def health(self) -> HealthStatus:
+    async def health(
+        self,
+    ) -> HealthStatus:
         payload = await self._get_json(
             "health"
         )
 
         return HealthStatus.model_validate(
             payload
+        )
+
+    async def anomaly_status(
+        self,
+    ) -> AnomalyModelStatus:
+        payload = await self._get_json(
+            "ml/anomaly/status"
+        )
+
+        return (
+            AnomalyModelStatus.model_validate(
+                payload
+            )
+        )
+
+    async def train_anomaly_model(
+        self,
+        *,
+        limit: int = 2000,
+        nu: float = 0.03,
+    ) -> AnomalyModelStatus:
+        self._validate_training_parameters(
+            limit=limit,
+            nu=nu,
+        )
+
+        payload = await self._post_json(
+            "ml/anomaly/train",
+            json_payload={
+                "limit": limit,
+                "nu": nu,
+            },
+        )
+
+        return (
+            AnomalyModelStatus.model_validate(
+                payload
+            )
         )
 
     async def list_assets(
@@ -266,7 +315,9 @@ class VectorPulseClient:
         self,
         path: str,
         *,
-        params: dict[str, object] | None = None,
+        params: (
+            dict[str, object] | None
+        ) = None,
     ) -> object:
         try:
             response = await self._http.get(
@@ -280,6 +331,36 @@ class VectorPulseClient:
                 f"{self._base_url}: {exc}"
             ) from exc
 
+        return self._response_json(
+            response
+        )
+
+    async def _post_json(
+        self,
+        path: str,
+        *,
+        json_payload: dict[str, object],
+    ) -> object:
+        try:
+            response = await self._http.post(
+                path.lstrip("/"),
+                json=json_payload,
+            )
+
+        except httpx.RequestError as exc:
+            raise VectorPulseConnectionError(
+                "Could not connect to "
+                f"{self._base_url}: {exc}"
+            ) from exc
+
+        return self._response_json(
+            response
+        )
+
+    def _response_json(
+        self,
+        response: httpx.Response,
+    ) -> object:
         if response.is_error:
             detail = self._extract_error_detail(
                 response
@@ -305,13 +386,21 @@ class VectorPulseClient:
                 or "Unknown API error"
             )
 
-        if isinstance(payload, dict):
-            detail = payload.get("detail")
+        if isinstance(
+            payload,
+            dict,
+        ):
+            detail = payload.get(
+                "detail"
+            )
 
             if detail is not None:
                 return str(detail)
 
-        return response.text or "Unknown API error"
+        return (
+            response.text
+            or "Unknown API error"
+        )
 
     @staticmethod
     def _validate_limit(
@@ -320,4 +409,22 @@ class VectorPulseClient:
         if not 1 <= limit <= 200:
             raise ValueError(
                 "limit must be between 1 and 200"
+            )
+
+    @staticmethod
+    def _validate_training_parameters(
+        *,
+        limit: int,
+        nu: float,
+    ) -> None:
+        if not 100 <= limit <= 10_000:
+            raise ValueError(
+                "training limit must be "
+                "between 100 and 10000"
+            )
+
+        if not 0.001 <= nu <= 0.25:
+            raise ValueError(
+                "nu must be between "
+                "0.001 and 0.25"
             )

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from vector_pulse.application.asset_registry import (
     AssetStatus,
@@ -19,6 +19,33 @@ from vector_pulse.ingestion.schemas import TelemetryMessage
 
 class HealthResponse(BaseModel):
     status: str
+
+
+class AnomalyTrainingRequest(BaseModel):
+    limit: int = Field(
+        default=2000,
+        ge=100,
+        le=10_000,
+    )
+
+    nu: float = Field(
+        default=0.03,
+        ge=0.001,
+        le=0.25,
+    )
+
+
+class AnomalyModelStatusResponse(BaseModel):
+    ready: bool
+    training: bool
+
+    model_path: str
+
+    trained_at: datetime | None
+    sample_count: int | None
+    nu: float | None
+
+    feature_names: list[str] | None
 
 
 class AssetStateResponse(BaseModel):
