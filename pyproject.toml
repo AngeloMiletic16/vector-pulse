@@ -1,7 +1,7 @@
 [project]
 name = "vector-pulse"
 version = "0.1.0"
-description = "Add your description here"
+description = "Async Industrial Asset Tracking and Predictive Monitoring Platform"
 readme = "README.md"
 authors = [
     { name = "AngeloMiletic", email = "angelo.miletic.am@gmail.com" }
