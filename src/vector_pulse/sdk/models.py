@@ -33,6 +33,7 @@ class AlertType(str, Enum):
     DWELL_TIME_EXCEEDED = "dwell_time_exceeded"
     EXCESSIVE_SPEED = "excessive_speed"
     IMPOSSIBLE_MOVEMENT = "impossible_movement"
+    LOW_BATTERY = "low_battery"
     ANOMALY_DETECTED = "anomaly_detected"
 
 

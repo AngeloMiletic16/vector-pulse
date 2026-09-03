@@ -21,6 +21,7 @@ class RuleAlertType(str, Enum):
     DWELL_TIME_EXCEEDED = "dwell_time_exceeded"
     EXCESSIVE_SPEED = "excessive_speed"
     IMPOSSIBLE_MOVEMENT = "impossible_movement"
+    LOW_BATTERY = "low_battery"
     ANOMALY_DETECTED = "anomaly_detected"
 
 
@@ -126,6 +127,100 @@ class DwellRuleEngine:
                     policy.threshold_seconds
                 ),
             },
+        )
+
+
+@dataclass(frozen=True)
+class BatteryRuleConfig:
+    low_battery_threshold_percent: float = 20.0
+
+    def __post_init__(self) -> None:
+        if not (
+            0.0
+            < self.low_battery_threshold_percent
+            < 100.0
+        ):
+            raise ValueError(
+                "Low battery threshold must be "
+                "between 0 and 100 percent"
+            )
+
+
+class BatteryRuleEngine:
+    def __init__(
+        self,
+        config: BatteryRuleConfig,
+    ) -> None:
+        self._config = config
+
+    @property
+    def config(self) -> BatteryRuleConfig:
+        return self._config
+
+    def evaluate(
+        self,
+        previous_state: AssetState | None,
+        current_state: AssetState,
+    ) -> RuleAlert | None:
+        threshold = (
+            self._config
+            .low_battery_threshold_percent
+        )
+
+        current_battery = (
+            current_state
+            .telemetry
+            .condition
+            .battery_percent
+        )
+
+        if current_battery > threshold:
+            return None
+
+        previous_battery: float | None = None
+
+        if previous_state is not None:
+            previous_battery = (
+                previous_state
+                .telemetry
+                .condition
+                .battery_percent
+            )
+
+            if previous_battery <= threshold:
+                return None
+
+        details: dict[
+            str,
+            AlertDetailValue,
+        ] = {
+            "battery_percent": current_battery,
+            "threshold_percent": threshold,
+        }
+
+        if previous_battery is not None:
+            details[
+                "previous_battery_percent"
+            ] = previous_battery
+
+        return RuleAlert(
+            type=RuleAlertType.LOW_BATTERY,
+            severity=AlertSeverity.WARNING,
+            tag_id=(
+                current_state.telemetry.tag_id
+            ),
+            occurred_at=current_state.last_seen,
+            sequence_number=(
+                current_state
+                .telemetry
+                .sequence_number
+            ),
+            zone=current_state.current_zone,
+            message=(
+                "Asset battery reached configured "
+                "low-battery threshold"
+            ),
+            details=details,
         )
 
 
@@ -304,6 +399,12 @@ DEFAULT_DWELL_POLICIES = (
         threshold_seconds=30.0,
     ),
 )
+
+
+def create_default_battery_rules() -> BatteryRuleEngine:
+    return BatteryRuleEngine(
+        BatteryRuleConfig()
+    )
 
 
 def create_default_dwell_rules() -> DwellRuleEngine:

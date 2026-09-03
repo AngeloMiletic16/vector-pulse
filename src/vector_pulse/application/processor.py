@@ -17,9 +17,11 @@ from vector_pulse.application.geofencing import (
 )
 from vector_pulse.application.rules import (
     AlertSeverity,
+    BatteryRuleEngine,
     MovementRuleEngine,
     RuleAlert,
     RuleAlertType,
+    create_default_battery_rules,
     create_default_movement_rules,
 )
 from vector_pulse.ingestion.schemas import TelemetryMessage
@@ -100,10 +102,16 @@ async def process_telemetry(
     geofence: GeofenceService,
     movement_rules: MovementRuleEngine | None = None,
     anomaly_service: AnomalyService | None = None,
+    battery_rules: BatteryRuleEngine | None = None,
 ) -> None:
     if movement_rules is None:
         movement_rules = (
             create_default_movement_rules()
+        )
+
+    if battery_rules is None:
+        battery_rules = (
+            create_default_battery_rules()
         )
 
     while True:
@@ -188,6 +196,13 @@ async def process_telemetry(
                     "Asset disappeared from registry"
                 )
 
+            battery_alert = (
+                battery_rules.evaluate(
+                    previous_state,
+                    state,
+                )
+            )
+
             await storage.save_accepted_telemetry(
                 state
             )
@@ -229,6 +244,21 @@ async def process_telemetry(
                     f"type={alert.type.value} "
                     f"tag={alert.tag_id} "
                     f"severity={alert.severity.value}"
+                )
+
+            if battery_alert is not None:
+                await _publish_alert(
+                    battery_alert,
+                    state,
+                    storage,
+                    broadcaster,
+                )
+
+                print(
+                    "Low battery alert "
+                    f"tag={battery_alert.tag_id} "
+                    "battery="
+                    f"{telemetry.condition.battery_percent:.1f}%"
                 )
 
             if anomaly_service is not None:
