@@ -97,7 +97,7 @@ def create_app(
             "HTTP and WebSocket API for industrial "
             "asset tracking and predictive monitoring."
         ),
-        version="0.1.0",
+        version="1.0.0",
         lifespan=lifespan,
     )
 
