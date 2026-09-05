@@ -356,6 +356,17 @@ vector-pulse/
 └── uv.lock
 ```
 
+## Documentation
+
+Detailed engineering and usage documentation lives in `docs/`:
+
+- [Architecture](docs/ARCHITECTURE.md) — runtime components, async design, data flow, persistence, rules, ML, and trade-offs
+- [Requirements](docs/REQUIREMENTS.md) — functional/non-functional requirements and design decisions
+- [Testing](docs/TESTING.md) — unit, integration, Docker E2E, manual acceptance, and final release procedure
+- [Role Traceability](docs/TRACEABILITY.md) — targeted Python Developer requirements mapped to concrete repository evidence
+- [Developer Guide](docs/DEVELOPER_GUIDE.md) — local setup, configuration, development workflow, quality gates, and packaging
+- [Operator Guide](docs/OPERATOR_GUIDE.md) — Docker runtime, CLI usage, alerts, live events, ML operations, and troubleshooting
+
 ## Engineering Notes
 
 A few design choices are intentional:
